@@ -1,4 +1,4 @@
-# WellDetective
+# Wel Detective 🕵🏼
 Python module for analysis of unidentified oil and gas well datasets
 
 # Setting up WellDetective
