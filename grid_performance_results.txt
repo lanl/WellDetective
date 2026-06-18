@@ -1,0 +1,17 @@
+Warning: harmonica not installed. Reduction to pole and filtering will not be available.
+Warning: pyIGRF not installed. IGRF calculations will not be available.
+================================================================================
+WellDetective v2.0.1 Grid Interpolation Performance Test
+================================================================================
+
+Dataset: LBL Osage (merged processed data)
+Location: /Users/jamesedlee/Desktop/Science Projects/CAFE/Orphan Wells/FY24_Osage/UAS/LBL/Merged_processed_Mag_all.csv
+
+--------------------------------------------------------------------------------
+Loading pre-processed data...
+--------------------------------------------------------------------------------
+✓ Loaded 2,019,348 data points
+  Columns: ['Unnamed: 0', 'Latitude', 'Longitude', 'Mag']
+
+✗ Missing required columns: ['easting', 'northing', 'Corrected']
+   Available columns: ['Unnamed: 0', 'Latitude', 'Longitude', 'Mag']

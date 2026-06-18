@@ -1,5 +1,14 @@
 # Well Detective 🕵🏼
-Python module for analysis of unidentified oil and gas well datasets
+Python module for processing and analyzing UAV-based magnetometry data to identify buried oil and gas well casings
+
+## Version & Authorship
+
+**Version:** 2.0  
+**Original Authors (v1.0):** Eric Guiltinan, Javier Santos  
+**Current Authors (v2.0):** Eric Guiltinan, Nash Taylor, James E. Lee  
+**Maintainer:** James E. Lee (Los Alamos National Laboratory)  
+**Repository:** https://github.com/lanl/WellDetective  
+**Last Updated:** June 2026
 
 # Setting up WellDetective
 
@@ -12,15 +21,15 @@ Python module for analysis of unidentified oil and gas well datasets
     $ python -m pip install -e . 
 
 # Documentation 
-WellDetective documentation can be found [here](https://lanl.github.io/WellDetective/)
+WellDetective documentation can be found [here](https://github.com/lanl/WellDetective/tree/main)
 
-    https://lanl.github.io/WellDetective/
+    https://github.com/lanl/WellDetective/tree/main
 
 Or in the WellDetective.pdf document in the main directory 
 
 # Open-Source License
 
-This LANL repository referene number is O4932
+This LANL repository reference number is O4932
 
 This program is distributed under an OSS license.
  

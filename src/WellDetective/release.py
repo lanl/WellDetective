@@ -6,7 +6,7 @@ name = "WellDetective"
 
 date = now.strftime("%Y-%m-%d %H:%M")
 
-version = "1.0"
+version = "2.0"
 
 description = "Analysis of unidentified oil and gas well datasets"
 
@@ -17,16 +17,18 @@ WellDetective is a Python module to analyze unidentified oil and gas well datase
 
 authors = {
     'Guiltinan': ('Eric Guiltinan', 'eric.guiltinan@lanl.gov'),
+    'Taylor': ('Nash Taylor', 'nashctay@lanl.gov'),
+    'Lee': ('James E. Lee', 'jamesedlee@lanl.gov'),
     'Santos': ('Javier Santos', 'jesantos@lanl.gov')
 }
 
 license = "GPL"
 
-maintainer = "WellDetective Developers, Eric Guiltinan"
+maintainer = "WellDetective Developers, James E. Lee"
 
-maintainer_email = "eric.guiltinan@lanl.gov"
+maintainer_email = "jamesedlee@lanl.gov"
 
-url = 'https://github.com/Eric-Guiltinan/WellDetective'
+url = 'https://github.com/lanl/WellDetective/tree/main'
 
 platforms = ['Linux', 'Mac OSX', 'Unix']
 
