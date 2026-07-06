@@ -90,6 +90,7 @@ class WellDetective:
     MAG_X_COLUMNS = ['B1x [nT]', 'B2x [nT]', 'B3x [nT]', 'B4x [nT]', 'B5x [nT]', 'Mag-X[nT]']
     MAG_Y_COLUMNS = ['B1y [nT]', 'B2y [nT]', 'B3y [nT]', 'B4y [nT]', 'B5y [nT]', 'Mag-Y[nT]']
     MAG_Z_COLUMNS = ['B1z [nT]', 'B2z [nT]', 'B3z [nT]', 'B4z [nT]', 'B5z [nT]', 'Mag-Z[nT]']
+    ALT_COLUMNS = ['Alt','Alt [m]','Altitude','Altitude [m]']
     
     # Default parameters
     ## Processing Total Magnetic Field
@@ -100,7 +101,7 @@ class WellDetective:
     DEFAULT_HEADING_TOLERANCE = 20  # Tolerance (degrees) around primary/secondary headings - data outside range is removed
     
     ## Heading Correction Baseline Method
-    DEFAULT_HEADING_METHOD = 0  # Background correction method: 0=mean, 1=median, 2=Gaussian fit
+    DEFAULT_HEADING_METHOD = 1  # Background correction method: 0=mean, 1=median, 2=Gaussian fit
     
     ## Filtering valid Segments
     DEFAULT_MAX_GAP_DIST = 10  # Maximum gap (meters) between consecutive points - larger gaps split segments
@@ -175,7 +176,58 @@ class WellDetective:
     @staticmethod
     def get_matching_columns(df: pd.DataFrame, column_list: list) -> list:
         """Return list of DataFrame columns that exist in the string list."""
-        return [col for col in df.columns if col in column_list]
+        # return [col for col in df.columns if col in column_list]
+        return [col for col in column_list if col in df.columns]
+        
+    @staticmethod
+    def heading_in_range(heading_series, range_tuple):
+        """
+        Check if headings are within range, handling 0°/360° wraparound.
+        
+        This is critical for lawnmower patterns with north-south flight lines
+        where heading ranges cross the 0°/360° boundary.
+        
+        Parameters
+        ----------
+        heading_series : pd.Series
+            Series of heading values in degrees [0, 360]
+        range_tuple : tuple
+            (min_heading, max_heading) in degrees
+            Can extend beyond [0, 360] for wraparound cases
+            
+        Returns
+        -------
+        pd.Series (bool)
+            Boolean mask indicating which headings fall within the range
+            
+        Examples
+        --------
+        >>> headings = pd.Series([0, 1, 5, 10, 90, 180, 350, 355, 359])
+        >>> WellDetective.heading_in_range(headings, (170, 190))
+        # Returns: [False, False, False, False, False, True, False, False, False]
+        
+        >>> WellDetective.heading_in_range(headings, (350, 370))  # Wraparound
+        # Returns: [True, True, True, True, False, False, True, True, True]
+        
+        >>> WellDetective.heading_in_range(headings, (-10, 10))  # Wraparound
+        # Returns: [True, True, True, True, False, False, True, True, True]
+        """
+        min_h, max_h = range_tuple
+        
+        if min_h < 0 or max_h > 360:
+            # Wraparound case (e.g., range = (350, 370) means 350-360 and 0-10)
+            min_h_norm = min_h % 360
+            max_h_norm = max_h % 360
+            
+            if min_h < 0:
+                # Range like (-10, 10) -> (350, 360) OR (0, 10)
+                return (heading_series >= (360 + min_h)) | (heading_series <= max_h_norm)
+            else:
+                # Range like (350, 370) -> (350, 360) OR (0, 10)
+                return (heading_series >= min_h_norm) | (heading_series <= max_h_norm)
+        else:
+            # Normal case - no wraparound
+            return heading_series.between(min_h, max_h)
 
     # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     # Loading files  (Level: .data_raw)
@@ -300,7 +352,7 @@ class WellDetective:
         Returns
         -------
         float
-            Heading in degrees (0° is North).
+            Heading in degrees (0° is North, 90° is East, 180° is South, 270° is West).
         """
         delta_lon = np.radians(lon2 - lon1)
         lat1_rad = np.radians(lat1)
@@ -309,7 +361,7 @@ class WellDetective:
         y = np.cos(lat1_rad) * np.sin(lat2_rad) - (np.sin(lat1_rad) * np.cos(lat2_rad) * np.cos(delta_lon))
         initial_heading = np.arctan2(x, y)
         heading = np.degrees(initial_heading)
-        compass_heading = (heading + 360+90) % 360
+        compass_heading = (heading + 360) % 360  # Fixed: removed incorrect +90 offset
         return compass_heading
 
     @staticmethod
@@ -667,9 +719,11 @@ class WellDetective:
         # # Determine Lat/Long fields in dataframe and interpolate sparse values
         latcol = WellDetective.get_matching_columns(New_data.data,WellDetective.LAT_COLUMNS)
         loncol = WellDetective.get_matching_columns(New_data.data,WellDetective.LON_COLUMNS)
+        altcol = WellDetective.get_matching_columns(New_data.data,WellDetective.ALT_COLUMNS)
         if not latcol or not loncol:
             raise ValueError("Latitude or Longitude columns not found in data")
         New_data.Check_4_LatLon(latcol[0],loncol[0])
+        New_data.Check_4_Alt(altcol[0])
         
         # # Calculate Total magnetic field if field doesn't exist
         New_data.Check_4_MagTotal()
@@ -710,17 +764,28 @@ class WellDetective:
                                          lat_col=latcol[0], 
                                          lon_col=loncol[0])
         
+        # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        # Normalization
+        # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
         # Equalize heading corrections
         New_data.auto_normalize_heading_correction(primary_range, secondary_range, mag_col=magcol[0],method=WellDetective.DEFAULT_HEADING_METHOD)
         
+        # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        # 
+        # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
         # Project coordinates (UTM zone 12)
         zone, hemi, epsg = New_data.get_survey_utm_zone(lat_col=latcol[0], lon_col=loncol[0])
         New_data.project_coordinates(utm_zone=zone, lat_col=latcol[0], lon_col=loncol[0])
 
         # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        # Optional Actions
+        # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
         if v_plotdata:
             New_data.plot_flight_tracks(E_incr=WellDetective.DEFAULT_MAP_XRES, N_incr=WellDetective.DEFAULT_MAP_YRES)
             
+        # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        # Outputs
+        # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
         return New_data
 
     @staticmethod
@@ -753,7 +818,9 @@ class WellDetective:
         processing_log = []
         failed_files = []
         
+        # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
         # Process each file
+        # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
         print('Loading files from Mag_File_List')
         for i, Mag_File in enumerate(Mag_File_List, 1):
             print(f"\n[{i}/{len(Mag_File_List)}] Processing: {Mag_File}")
@@ -810,11 +877,15 @@ class WellDetective:
                 if not skip_errors:
                     raise  # Re-raise the exception
         
+        # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
         # Check if we have any data
+        # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
         if not all_data_raw:
             raise ValueError("No files were successfully processed")
         
+        # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
         # Validate column consistency across files
+        # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
         if len(all_data_raw) > 1:
             first_cols = set(all_data_raw[0].columns)
             for i, df in enumerate(all_data_raw[1:], 2):
@@ -828,18 +899,24 @@ class WellDetective:
                         warning_msg += f" Extra: {extra}."
                     print(f"  ⚠ Warning: {warning_msg}")
         
+        # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
         # Concatenate all dataframes
+        # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
         combined_data_raw = pd.concat(all_data_raw, ignore_index=True)
         combined_data = pd.concat(all_data, ignore_index=True)
         combined_data_filtered = pd.concat(all_data_filtered, ignore_index=True)
         
+        # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
         # Create new WellDetective object with combined data
+        # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
         combined_wd = WellDetective(combined_data_raw)
         combined_wd.data = combined_data
         combined_wd.data_filtered = combined_data_filtered
         combined_wd.processing_log = processing_log  # Attach combined processing log
 
+        # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
         # Summary
+        # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
         print(f"\n{'='*60}")
         print(f"SUMMARY:")
         print(f"  Files processed: {len(all_data_raw)}/{len(Mag_File_List)}")
@@ -857,7 +934,9 @@ class WellDetective:
         print(f"\n")
         print(f"{'='*60}")
         
+        # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
         # Create Spatially Mapped Data
+        # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
         print(f"PROCESSING FUNCTIONS:")
         print(f"  1. Find primary/secondary headings:")
         print(f"\tprimary_range, secondary_range = wd.find_primary_secondary_headings(tolerance={WellDetective.DEFAULT_HEADING_TOLERANCE},...)")
@@ -871,7 +950,9 @@ class WellDetective:
         print(f"\n")
         print(f"{'='*60}")
         
+        # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
         # Create Spatially Mapped Data
+        # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
         print(f"MAPPING GRIDDED DATA:")
         print(f"  1. Mesh grid:")
         print(f"  WD.create_spatial_map(grid_size={WellDetective.DEFAULT_GRID_SIZE}, "
@@ -894,13 +975,127 @@ class WellDetective:
         print(f"\n")
         print(f"{'='*60}")
         
+        # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        # Optional Actions
+        # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
         if v_plotdata:
             combined_wd.plot_flight_tracks(E_incr=WellDetective.DEFAULT_MAP_XRES, N_incr=WellDetective.DEFAULT_MAP_YRES)
             combined_wd.plot_Mag_Heat(E_incr=WellDetective.DEFAULT_MAP_XRES, N_incr=WellDetective.DEFAULT_MAP_YRES, figsize=(12, 10), save_path=None)
             
-        # 
+        # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        # Output 
+        # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
         return combined_wd
 
+
+    @staticmethod
+    def Load_from_NetCDF(filepath: str) -> "WellDetective":
+        """
+        Load a WellDetective object from a NetCDF file.
+        
+        Parameters
+        ----------
+        filepath : str
+            Path to .nc file created by export_to_netcdf()
+        
+        Returns
+        -------
+        WellDetective
+            Reconstructed WellDetective object with data and map
+        
+        Example
+        -------
+        >>> wd = WellDetective.Load_from_NetCDF('survey_data.nc')
+        >>> print(len(wd.data_filtered))
+        >>> wd.plot_Mag_Heat()
+        
+        Notes
+        -----
+        The NetCDF file should have been created by WellDetective.export_to_netcdf()
+        and contains groups: raw, processed, filtered, map, and metadata.
+        """
+        import xarray as xr
+        
+        # Open NetCDF file
+        print(f"Loading WellDetective object from: {filepath}")
+        
+        # Load datasets from groups
+        try:
+            ds_raw = xr.open_dataset(filepath, group='raw')
+            data_raw = ds_raw.to_dataframe()
+            print(f"  ✓ Loaded data_raw: {len(data_raw):,} rows")
+        except:
+            data_raw = None
+            print(f"  ⚠ No raw data found")
+        
+        try:
+            ds_processed = xr.open_dataset(filepath, group='processed')
+            data = ds_processed.to_dataframe()
+            print(f"  ✓ Loaded data: {len(data):,} rows")
+        except:
+            data = None
+            print(f"  ⚠ No processed data found")
+        
+        try:
+            ds_filtered = xr.open_dataset(filepath, group='filtered')
+            data_filtered = ds_filtered.to_dataframe()
+            print(f"  ✓ Loaded data_filtered: {len(data_filtered):,} rows")
+        except:
+            data_filtered = None
+            print(f"  ⚠ No filtered data found")
+        
+        # Create WellDetective object
+        if data_raw is not None:
+            wd = WellDetective(data_raw)
+        elif data is not None:
+            wd = WellDetective(data)
+        elif data_filtered is not None:
+            wd = WellDetective(data_filtered)
+        else:
+            raise ValueError("NetCDF file contains no usable data")
+        
+        # Restore data levels
+        if data is not None:
+            wd.data = data
+        if data_filtered is not None:
+            wd.data_filtered = data_filtered
+        
+        # Load map if available
+        try:
+            ds_map = xr.open_dataset(filepath, group='map')
+            
+            # Reconstruct map dictionary
+            mag_grid_da = ds_map['magnetic_anomaly']
+            
+            # Extract numpy arrays
+            grid_x, grid_y = np.meshgrid(mag_grid_da.x.values, mag_grid_da.y.values, indexing='ij')
+            mag_grid = mag_grid_da.values
+            
+            wd.map = {
+                'data_array': mag_grid_da,
+                'grid_x': grid_x,
+                'grid_y': grid_y,
+                'mag_grid': mag_grid,
+                'inclination': float(ds_map.attrs.get('inclination', 0)),
+                'declination': float(ds_map.attrs.get('declination', 0)),
+                'grid_size': float(ds_map.attrs.get('grid_size', 0)),
+                'cutoff_wavelength': float(ds_map.attrs.get('cutoff_wavelength', 0)),
+                'proximity_threshold': float(ds_map.attrs.get('proximity_threshold', 0)),
+            }
+            print(f"  ✓ Loaded spatial map: {mag_grid.shape}")
+        except Exception as e:
+            print(f"  ⚠ No map data found or error loading: {e}")
+        
+        # Load metadata if available
+        try:
+            ds_meta = xr.open_dataset(filepath, group='metadata')
+            # Could restore processing_log here if saved
+            print(f"  ✓ Loaded metadata")
+        except:
+            print(f"  ⚠ No metadata found")
+        
+        print(f"\n✓ WellDetective object successfully loaded from NetCDF")
+        return wd
 
 
     # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -1085,6 +1280,31 @@ class WellDetective:
             self.data[col] = self.data[col].replace(0, np.nan).interpolate(method='linear')
         
         return self
+
+    def Check_4_Alt(
+        self,
+        altcolname: str = "Alt",
+    ):
+        """
+        Interpolate lat/lon coordinates for sparsely recorded values
+        
+        Args:
+            self: DataFrame containing magnetometer data
+            altcolname: Name of self field containing Altitude data
+        Returns:
+            DataFrame with added 0 values replaced by linearly interpolated locations:
+                - : 
+        Raises:
+            TypeError: If self is not a pandas DataFrame
+        """
+        # Type checking
+        # if not isinstance(self.data, pd.DataFrame):
+        #     raise TypeError(f"df must be a pandas DataFrame, got {type(self).__name__}")
+        
+        for col in [altcolname]:
+            self.data[col] = self.data[col].replace(0, np.nan).interpolate(method='linear')
+        
+        return self
     
     def Check_4_MagTotal(
         self
@@ -1215,7 +1435,7 @@ class WellDetective:
         
         initial_heading = np.arctan2(x, y)
         heading = np.degrees(initial_heading)
-        compass_heading = (heading + 360 + 90) % 360
+        compass_heading = (heading + 360) % 360  # Fixed: removed incorrect +90 offset
         
         # Set first 'window' headings to 0 (or NaN if preferred)
         compass_heading[:window] = 0
@@ -1418,14 +1638,25 @@ class WellDetective:
             file_mask = self.data_filtered['Filepath'].str.contains(filename, na=False)
             if file_mask.sum() == 0:
                 raise ValueError(f"No data found matching filename: '{filename}'")
-            headings = self.data_filtered.loc[file_mask, "Heading"].values.reshape(-1, 1)
+            headings = self.data_filtered.loc[file_mask, "Heading"].values
             print(f"Finding headings for {file_mask.sum():,} points matching '{filename}'")
         else:
-            headings = self.data_filtered["Heading"].values.reshape(-1, 1)
+            headings = self.data_filtered["Heading"].values
             print(f"Finding headings for all {len(headings):,} points")
     
-        kmeans = KMeans(n_clusters=2, random_state=0).fit(headings)
-        centers = sorted(kmeans.cluster_centers_.flatten())
+        # Convert headings to unit vectors to handle 0°/360° wraparound properly
+        # This is critical for lawnmower patterns with north/south flight lines
+        headings_rad = np.radians(headings)
+        heading_vectors = np.column_stack([np.cos(headings_rad), np.sin(headings_rad)])
+        
+        # Cluster in 2D vector space
+        kmeans = KMeans(n_clusters=2, random_state=0).fit(heading_vectors)
+        
+        # Convert cluster centers back to angles
+        centers_x = kmeans.cluster_centers_[:, 0]
+        centers_y = kmeans.cluster_centers_[:, 1]
+        centers_angles = np.degrees(np.arctan2(centers_y, centers_x)) % 360
+        centers = sorted(centers_angles)
     
         primary_range = (centers[0] - tolerance, centers[0] + tolerance)
         secondary_range = (centers[1] - tolerance, centers[1] + tolerance)
@@ -1457,9 +1688,9 @@ class WellDetective:
               "Please run add_heading_column() before removing turning data."
             )
         
-
-        mask = ((self.data_filtered["Heading"].between(*primary_range)) |
-                (self.data_filtered["Heading"].between(*secondary_range)))
+        # Use the class static method for wraparound-aware filtering
+        mask = (WellDetective.heading_in_range(self.data_filtered["Heading"], primary_range) |
+                WellDetective.heading_in_range(self.data_filtered["Heading"], secondary_range))
 
         if mask.sum() == 0:
             raise ValueError(
@@ -1516,9 +1747,13 @@ class WellDetective:
             
         # Calculate ALL distances at once
         distances = compute_distances_vectorized(self.data_filtered[lat_col], self.data_filtered[lon_col])
-
         segmentBreaks = np.where(distances > max_gap_distance)[0]
-
+        
+        # Add distances as column (append 0 for last point since there's no "next" point)
+        self.data_filtered['step_distance'] = np.append(distances, 0)
+        
+        print(f'Distances between {distances.min():.2f} - {distances.max():.2f} m')
+        
         # Group data into segments
         segmentRanges = []
         startIdx = 0
@@ -1625,12 +1860,12 @@ class WellDetective:
                 return data.mean()
 
         # Extract data for each heading range
-        primary_data = self.data_filtered.loc[
-            self.data_filtered["Heading"].between(*primary_range), mag_col
-        ]
-        secondary_data = self.data_filtered.loc[
-            self.data_filtered["Heading"].between(*secondary_range), mag_col
-        ]
+        # Use class static method for wraparound-aware filtering
+        primary_mask = WellDetective.heading_in_range(self.data_filtered["Heading"], primary_range)
+        secondary_mask = WellDetective.heading_in_range(self.data_filtered["Heading"], secondary_range)
+        
+        primary_data = self.data_filtered.loc[primary_mask, mag_col]
+        secondary_data = self.data_filtered.loc[secondary_mask, mag_col]
         
          # Calculate background/central value based on method
         if method == 0:
@@ -1657,8 +1892,9 @@ class WellDetective:
             raise ValueError(f"Invalid method: {method}. Must be 0 (mean), 1 (median), or 2 (Gaussian fit)") 
 
         # Apply correction - subtract background from each heading's data
-        idx_primary = self.data_filtered["Heading"].between(*primary_range)
-        idx_secondary = self.data_filtered["Heading"].between(*secondary_range)
+        # Use class static method for wraparound-aware masking
+        idx_primary = WellDetective.heading_in_range(self.data_filtered["Heading"], primary_range)
+        idx_secondary = WellDetective.heading_in_range(self.data_filtered["Heading"], secondary_range)
         
         # Create Corrected column (copy first to preserve original mag_col)
         self.data_filtered["Corrected"] = self.data_filtered[mag_col].copy()
@@ -1767,8 +2003,9 @@ class WellDetective:
         import time
         
         # Subtract mean
-        mag_mean = self.data_filtered['Corrected'].mean()
-        corrected = self.data_filtered['Corrected'] - mag_mean
+        # mag_mean = self.data_filtered['Corrected'].mean()
+        # corrected = self.data_filtered['Corrected'] - mag_mean
+        corrected = self.data_filtered['Corrected']
 
         # Calculate number of grid points from grid size
         easting_range = self.data_filtered["easting"].max() - self.data_filtered["easting"].min()
@@ -1997,10 +2234,10 @@ class WellDetective:
         })
 
         #
-        
         if v_plotdata:
-            self.plot_Mag_Heat(E_incr=WellDetective.DEFAULT_MAP_XRES, N_incr=WellDetective.DEFAULT_MAP_YRES, figsize=(12, 10), save_path=None)
-            
+            self.plot_Mag_Heat(E_incr=WellDetective.DEFAULT_MAP_XRES, N_incr=WellDetective.DEFAULT_MAP_YRES, figsize=(12, 10), save_path=None)   
+        
+        #
         return self
     
     # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -2614,8 +2851,9 @@ class WellDetective:
             print(f"Secondary range: {secondary_range[0]:.2f}° - {secondary_range[1]:.2f}°")
         
         # Create masks for primary and secondary headings
-        primary_mask = plot_data['Heading'].between(*primary_range)
-        secondary_mask = plot_data['Heading'].between(*secondary_range)
+        # Use class static method for wraparound-aware filtering
+        primary_mask = WellDetective.heading_in_range(plot_data['Heading'], primary_range)
+        secondary_mask = WellDetective.heading_in_range(plot_data['Heading'], secondary_range)
         
         # Extract data for histograms
         primary_mag = plot_data.loc[primary_mask, mag_col].dropna()
@@ -2663,11 +2901,16 @@ class WellDetective:
         correction_mean = primary_mean - secondary_mean
         correction_median = primary_median - secondary_median
         
-        # Plot histograms
-        ax[1].hist(primary_mag, bins=bins, alpha=0.6, color='gray', 
+        # Calculate common bins for both histograms
+        # Use the combined range of both datasets
+        all_mag = pd.concat([primary_mag, secondary_mag])
+        bin_edges = np.linspace(all_mag.min(), all_mag.max(), bins + 1)
+        
+        # Plot histograms with same bins
+        ax[1].hist(primary_mag, bins=bin_edges, alpha=0.6, color='gray', 
                    label=f'Primary (μ={primary_mean:.2f}, σ={primary_std:.2f})', 
                    edgecolor='black', linewidth=0.5)
-        ax[1].hist(secondary_mag, bins=bins, alpha=0.6, color='blue', 
+        ax[1].hist(secondary_mag, bins=bin_edges, alpha=0.6, color='blue', 
                    label=f'Secondary (μ={secondary_mean:.2f}, σ={secondary_std:.2f})', 
                    edgecolor='black', linewidth=0.5)
         
@@ -2677,9 +2920,9 @@ class WellDetective:
         ax[1].axvline(secondary_mean, color='darkblue', linestyle='--', linewidth=2, 
                       label=f'Secondary Mean')
         ax[1].axvline(primary_median, color='black', linestyle=':', linewidth=2, 
-                      label=f'Primary Mean')
+                      label=f'Primary Median')
         ax[1].axvline(secondary_median, color='darkblue', linestyle=':', linewidth=2, 
-                      label=f'Secondary Mean')
+                      label=f'Secondary Median')
         
         ax[1].set_xlabel(f"{mag_col} (nT)", fontsize=11)
         ax[1].set_ylabel("Frequency", fontsize=11)
@@ -2699,3 +2942,126 @@ class WellDetective:
             plt.show()
         
         return fig, ax
+
+    def plot_corrected_mag_by_heading(self, figsize=None, save_path=None):
+        """
+        Plot corrected magnetometry data for each file with heading color coding.
+        
+        Creates a tall figure with subplots (one per file in the dataset).
+        Each subplot shows corrected magnetic field vs. sample index, 
+        color-coded by heading direction.
+        
+        Parameters
+        ----------
+        self : WellDetective
+            WellDetective object with processed data
+        figsize : tuple, optional
+            Figure size (width, height). If None, auto-sizes based on number of files
+        save_path : str, optional
+            Path to save figure. If None, displays interactively
+        
+        Returns
+        -------
+        fig, axes : tuple
+            Matplotlib figure and axes objects
+            
+        Example
+        -------
+        >>> self.WellDetective.Load_Process_MagDataFile('path/to/file.csv')
+        >>> fig, axes = wd.plot_corrected_mag_by_heading()
+        >>> plt.show()
+        """
+        from matplotlib.collections import LineCollection
+        
+        # Check required columns
+        if 'Corrected' not in self.data_filtered.columns:
+            raise ValueError("'Corrected' column not found. Run auto_normalize_heading_correction() first.")
+        if 'Heading' not in self.data_filtered.columns:
+            raise ValueError("'Heading' column not found. Run add_heading_column() first.")
+        
+        # Get unique files
+        if 'Filepath' in self.data_filtered.columns:
+            files = self.data_filtered['Filepath'].unique()
+            n_files = len(files)
+        else:
+            # Single file case
+            files = ['All Data']
+            n_files = 1
+        
+        # Auto-size figure if not provided
+        if figsize is None:
+            figsize = (12, 4 * n_files)
+        
+        # Create subplots
+        fig, axes = plt.subplots(n_files, 1, figsize=figsize, sharex=False)
+        
+        # Handle single subplot case
+        if n_files == 1:
+            axes = [axes]
+        
+        # Plot each file
+        for idx, filename in enumerate(files):
+            ax = axes[idx]
+            
+            # Filter data for this file
+            if 'Filepath' in self.data_filtered.columns:
+                file_mask = self.data_filtered['Filepath'] == filename
+                plot_data = self.data_filtered[file_mask].copy()
+                # Use basename for cleaner titles
+                display_name = os.path.basename(filename)
+            else:
+                plot_data = self.data_filtered.copy()
+                display_name = 'All Data'
+            
+            # Get data
+            mag_corr = plot_data['Corrected'].values
+            heading = plot_data['Heading'].values
+            indices = np.arange(len(mag_corr))
+            
+            # Create line segments for color coding
+            points = np.array([indices, mag_corr]).T.reshape(-1, 1, 2)
+            segments = np.concatenate([points[:-1], points[1:]], axis=1)
+            
+            # Create line collection with heading colors
+            norm = mcolors.Normalize(vmin=0, vmax=360)
+            lc = LineCollection(segments, cmap='hsv', norm=norm, linewidth=0.8)
+            lc.set_array(heading)
+            
+            # Add to axes
+            line = ax.add_collection(lc)
+            ax.autoscale()
+            
+            # Formatting
+            ax.set_ylabel('Corrected Mag (nT)', fontsize=10)
+            ax.set_title(display_name, fontsize=11, fontweight='bold', loc='left')
+            ax.grid(True, alpha=0.3, linewidth=0.5)
+            
+            # Add colorbar
+            cbar = plt.colorbar(line, ax=ax, label='Heading (°)', pad=0.01)
+            cbar.set_ticks([0, 90, 180, 270, 360])
+            cbar.ax.tick_params(labelsize=9)
+            
+            # Add statistics as text
+            mean_mag = mag_corr.mean()
+            std_mag = mag_corr.std()
+            n_points = len(mag_corr)
+            stats_text = f'n={n_points:,} | μ={mean_mag:.1f} nT | σ={std_mag:.1f} nT'
+            ax.text(0.02, 0.98, stats_text, transform=ax.transAxes, 
+                    fontsize=9, verticalalignment='top',
+                    bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
+        
+        # Bottom plot gets x-label
+        axes[-1].set_xlabel('Sample Index', fontsize=10)
+        
+        # Overall title
+        fig.suptitle('Corrected Magnetic Field by Heading', 
+                     fontsize=13, fontweight='bold', y=0.995)
+        
+        plt.tight_layout()
+        
+        # Save or show
+        if save_path:
+            plt.savefig(save_path, dpi=300, bbox_inches='tight')
+            print(f"Figure saved to: {save_path}")
+        
+        return fig, axes

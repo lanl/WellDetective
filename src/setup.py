@@ -35,7 +35,7 @@ name = "WellDetective"
 
 date = now.strftime("%Y-%m-%d %H:%M")
 
-version = "2.0"
+version = "2.0.2"
 
 description = "Analysis of unidentified oil and gas well datasets"
 

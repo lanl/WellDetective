@@ -97,6 +97,19 @@ wd = WellDetective.Load_Process_MultipleMagDataFiles(
 )
 ```
 
+**Load from NetCDF (Fast):**
+```python
+# Load previously processed and saved data
+wd = WellDetective.Load_from_NetCDF('survey_data.nc')
+
+# Restores all data levels and spatial map
+# Much faster than reprocessing from CSV
+print(f"Loaded {len(wd.data_filtered):,} filtered points")
+
+# Continue analysis or plotting
+wd.plot_Mag_Heat()
+```
+
 **What happens during loading:**
 1. Auto-detects file format (delimiter, header line)
 2. Validates/adds date information (forward-fills sparse date values)
@@ -357,9 +370,23 @@ wd.plot_Heading_Corr(filename='flight1.csv')  # Auto-detects mag column
 
 # 5. Export (auto-detects CRS)
 wd.export_map_to_geotiff('magnetic_map.tif')  # Auto-detects UTM zone
-wd.export_to_netcdf('survey.nc')  # Defaults: filtered + map only
+wd.export_to_netcdf('survey.nc')  # Save for fast loading later
 
 print("✓ Processing complete!")
+```
+
+### Quick Reload Workflow
+
+```python
+# On subsequent runs, load from NetCDF instead of reprocessing
+from WellDetective import WellDetective
+
+# Fast load (seconds instead of minutes)
+wd = WellDetective.Load_from_NetCDF('survey.nc')
+
+# Resume analysis
+wd.plot_Mag_Heat()
+wd.export_map_to_geotiff('updated_map.tif')
 ```
 
 ---
@@ -367,12 +394,13 @@ print("✓ Processing complete!")
 ## Tips
 
 1. **Always check optional dependencies first**: Some features require harmonica, pyIGRF, rasterio
-2. **Start with defaults**: The default parameters work well for most UAS magnetometry data (50m grid cells)
+2. **Start with defaults**: The default parameters work well for most UAS magnetometry data
 3. **Let it auto-detect**: Column names, date formats, UTM zones, and mag columns are all auto-detected
 4. **Use heading correction plots**: `plot_Heading_Corr(filename='...')` helps tune heading tolerance per flight
-5. **Export wisely**: Don't include raw/data levels in NetCDF unless you need them (default is filtered + map only)
-6. **Process related flights together**: Files that survey the same area should be loaded together for proper gridding
-7. **Grid size matters**: Smaller `grid_size` = finer detail but slower. Start with 50m, adjust as needed
+5. **Save your work**: Use `export_to_netcdf()` to save processed data - much faster than reprocessing
+6. **Load from NetCDF**: Use `Load_from_NetCDF()` for quick access to previously processed surveys
+7. **Process related flights together**: Files that survey the same area should be loaded together for proper gridding
+8. **Grid size matters**: Smaller `grid_size` = finer detail but slower. Start with 50m, adjust as needed
 
 ---
 

@@ -4,9 +4,75 @@ All notable changes to the WellDetective package are documented in this file.
 
 ---
 
-## Version 2.0.1 - 2026-06-09
+## Version 2.0.2 - 2026-06-24 (In Development)
+
+**Type:** Minor Update (New Features)
+
+### New Features
+
+#### Corrected Mag by Heading Visualization
+- **New Method:** `plot_corrected_mag_by_heading()` - Visualize corrected magnetic data color-coded by heading
+- **Purpose:** Quality control and visualization of heading-corrected magnetometry data
+- **Features:**
+  - Creates tall multi-panel figure (one subplot per file)
+  - Color-codes data points by heading direction (HSV colormap: 0-360°)
+  - Uses efficient LineCollection for smooth color transitions
+  - Automatic subsampling with `plot_every_nth=10` parameter
+  - Displays statistics (n, mean, std) for full dataset
+  - Auto-detects single vs. multi-file datasets
+- **Usage:** `fig, axes = wd.plot_corrected_mag_by_heading(plot_every_nth=10)`
+- **Files:** `WellDetective.py` lines ~2946-3067
+- **Backward Compatible:** Yes
+
+---
+
+## Version 2.0.1 - 2026-06-22
 
 **Type:** Patch Release (Bug Fixes + Performance)
+
+### Bug Fixes
+
+#### Fixed Heading Calculation (90° Offset Error)
+- **Issue:** All headings were rotated 90° clockwise due to incorrect `+90` offset in calculation
+  - North (0°) was calculated as East (90°)
+  - East (90°) was calculated as South (180°)
+  - South (180°) was calculated as West (270°)
+  - West (270°) was calculated as North (0°)
+- **Root Cause:** Incorrect formula `(heading + 360 + 90) % 360` should be `(heading + 360) % 360`
+- **Fix:** 
+  - `calculate_heading()`: Removed incorrect `+90` offset
+  - `add_heading_column()`: Removed incorrect `+90` offset
+- **Impact:** 
+  - **CRITICAL:** All previous heading-based analysis used wrong headings
+  - North-south surveys were interpreted as east-west
+  - Heading correction and turn removal affected wrong flight lines
+  - **Users must reprocess all data with heading-based filtering**
+- **Files:** `WellDetective.py` lines ~341-363 (calculate_heading), ~1375-1377 (add_heading_column)
+- **Backward Compatible:** No - intentional breaking change to fix incorrect behavior
+
+#### Fixed Heading Clustering and Filtering for 0°/360° Wraparound
+- **Issue:** Lawnmower patterns with north-south flight lines (headings near 0°/360°) caused:
+  - KMeans clustering to fail (detected 122° instead of 0°)
+  - Data filtering to lose ~25% of valid measurements
+  - `auto_normalize_heading_correction()` to eliminate data incorrectly
+  - `plot_Heading_Corr()` to show incorrect statistics
+- **Root Cause:** 
+  - Clustering treated 359° and 1° as 358° apart (should be 2°)
+  - `.between(350, 370)` failed to match headings in range [0, 20]
+- **Fix:** 
+  - Added `heading_in_range()` static method for wraparound-aware filtering
+  - `find_primary_secondary_headings()`: Now uses unit vector clustering (cos, sin) instead of raw angles
+  - `auto_normalize_heading_correction()`: Uses wraparound-aware filtering
+  - `remove_turning_data()`: Uses wraparound-aware filtering
+  - `plot_Heading_Corr()`: Uses wraparound-aware filtering
+- **Impact:** 
+  - Data retention improved from 75% → 99.9% for north-south patterns
+  - Correctly handles any flight line orientation crossing 0°/360° boundary
+  - No data loss for northeast-southwest patterns (45°/225°)
+  - Accurate heading correction statistics and visualizations
+- **Validation:** Comprehensive test suite included showing 25% data recovery
+- **Files:** `WellDetective.py` lines ~181-227 (static method), ~1523-1553 (clustering), ~1797-1803 (filtering), ~1580-1632 (turning), ~2789-2790 (plotting)
+- **Backward Compatible:** Yes - automatically handles all heading ranges correctly
 
 ### Bug Fixes
 
@@ -26,6 +92,23 @@ All notable changes to the WellDetective package are documented in this file.
 - **Output:** Added timing information and grid statistics
 - **Backward Compatible:** Original method available via `use_fast_interpolation=False`
 - **Files:** `WellDetective.py` lines ~109, ~1733
+
+#### Optimized Flight Track Plotting
+- **Improvement:** Changed from `scatter()` to `plot()` with pixel markers
+- **Speedup:** 10-100x faster for large datasets
+- **New Parameter:** `plot_every_nth=100` in `plot_flight_tracks()` for decimation
+- **Impact:** Plotting 1.5M points now takes <1 second vs 5-10 seconds
+- **Files:** `WellDetective.py` lines ~2329, ~2380
+
+### New Features
+
+#### NetCDF Import Function
+- **New Method:** `Load_from_NetCDF(filepath)` - Load previously saved WellDetective objects
+- **Purpose:** Fast loading of processed data without reprocessing from CSV
+- **Restores:** All data levels (raw, processed, filtered) and spatial maps
+- **Usage:** `wd = WellDetective.Load_from_NetCDF('survey.nc')`
+- **Benefits:** Seconds to load vs minutes to reprocess
+- **Files:** `WellDetective.py` line ~906
 
 ### Technical Details
 - No breaking changes

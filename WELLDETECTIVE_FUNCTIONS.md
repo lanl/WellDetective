@@ -388,6 +388,43 @@ wd = WellDetective.Load_Process_MultipleMagDataFiles('data/', files)
 
 ---
 
+### `Load_from_NetCDF(filepath)` [static]
+
+**Line:** ~906  
+**Type:** Static method - File I/O
+
+Load a previously saved WellDetective object from NetCDF file.
+
+**Parameters:**
+- `filepath` (str): Path to .nc file created by `export_to_netcdf()`
+
+**Returns:**
+- `WellDetective`: Reconstructed object with all data levels and map
+
+**Restores:**
+- `data_raw` - Original unprocessed data (if saved)
+- `data` - Working data with calculated fields (if saved)
+- `data_filtered` - Filtered data (if saved)
+- `map` - Spatial grid with metadata (if saved)
+
+**Example:**
+```python
+# Load previously processed survey
+wd = WellDetective.Load_from_NetCDF('survey_data.nc')
+
+# Resume analysis
+print(f"Loaded {len(wd.data_filtered):,} points")
+wd.plot_Mag_Heat()
+```
+
+**Notes:**
+- Much faster than reprocessing from CSV files
+- NetCDF file must have been created by `export_to_netcdf()`
+- Handles missing data groups gracefully
+- Useful for sharing processed datasets
+
+---
+
 ## Data Processing
 
 ### `Check_4_DateCol(v_date, v_deltaT=0.001)`
@@ -945,16 +982,57 @@ fig, axes = wd.plot_Heading_Corr(
 
 ---
 
+### `plot_corrected_mag_by_heading(figsize=None, save_path=None, plot_every_nth=10)`
+
+**Line:** 2946-3067
+
+Create tall multi-panel figure showing corrected magnetic field data color-coded by heading direction.
+
+**Parameters:**
+- `figsize` (tuple): Figure size (default: None for auto-sizing based on number of files)
+- `save_path` (str): Save path (default: None for interactive display)
+- `plot_every_nth` (int): Plot every Nth point to reduce density (default: 10)
+
+**Returns:** tuple (fig, axes)  
+**Internal Calls:**
+- `matplotlib.collections.LineCollection` for efficient color-coded lines
+
+**Requires:** 
+- `self.data_filtered` must exist and contain 'Corrected' and 'Heading' columns
+- Run `auto_normalize_heading_correction()` and `add_heading_column()` first
+
+**Features:**
+- Creates one subplot per file in dataset
+- Color-codes data by heading using HSV colormap (0-360°)
+- Efficient subsampling for large datasets
+- Displays full dataset statistics (n, mean, std)
+- Auto-detects single vs. multi-file datasets
+- Uses LineCollection for smooth color transitions
+
+**Example:**
+```python
+# Default (every 10th point)
+fig, axes = wd.plot_corrected_mag_by_heading()
+
+# More dense plotting
+fig, axes = wd.plot_corrected_mag_by_heading(plot_every_nth=5)
+
+# Save to file
+fig, axes = wd.plot_corrected_mag_by_heading(save_path='mag_by_heading.png')
+```
+
+---
+
 ## Summary Statistics
 
 ### Method Counts
 
 | Category | Count |
 |----------|-------|
-| **Total Methods** | 35 |
+| **Total Methods** | 36 |
 | Constructor | 1 |
 | Static Methods | 13 |
-| Instance Methods | 22 |
+| Instance Methods | 23 |
 | Private Methods | 1 |
 | Deprecated | 1 |
 
@@ -970,7 +1048,7 @@ fig, axes = wd.plot_Heading_Corr(
 | Mapping & Gridding | 2 |
 | Detection | 1 |
 | Export | 2 |
-| Plotting | 5 |
+| Plotting | 6 |
 
 ### Method Chaining
 
